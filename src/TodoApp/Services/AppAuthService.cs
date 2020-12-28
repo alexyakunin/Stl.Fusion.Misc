@@ -1,10 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.Linq;
-using System.Reactive;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -23,15 +20,7 @@ namespace TodoApp.Services
     [ServiceAlias(typeof(IServerSideAuthService), typeof(AppAuthService))]
     public class AppAuthService : DbServiceBase<AppDbContext>, IServerSideAuthService
     {
-        protected Func<ISerializer<string>> SerializerFactory { get; }
-        protected IMomentClock Clock { get; }
-
-        public AppAuthService(IServiceProvider services, Func<ISerializer<string>> serializerFactory, IMomentClock clock)
-            : base(services)
-        {
-            Clock = clock;
-            SerializerFactory = serializerFactory;
-        }
+        public AppAuthService(IServiceProvider services) : base(services) { }
 
         public async Task SignInAsync(User user, Session session, CancellationToken cancellationToken = default)
         {
@@ -224,18 +213,7 @@ namespace TodoApp.Services
                     FromJson<Dictionary<string, object>>(dbSession.ExtraPropertiesJson) ?? new()),
             };
 
-        private string ToJson<T>(T source)
-        {
-            if (Equals(source, default))
-                return "";
-            return SerializerFactory().Serialize(source);
-        }
-
-        private T? FromJson<T>(string json)
-        {
-            if (string.IsNullOrEmpty(json))
-                return default;
-            return SerializerFactory().Deserialize<T>(json);
-        }
+        private string ToJson<T>(T source) => JsonValue.New(source).Json;
+        private T? FromJson<T>(string json) => JsonValue.New<T>(json).Value;
     }
 }
