@@ -15,7 +15,7 @@ namespace TodoApp.Helpers.Internal
     }
 
     public record CommandHandler<TCommand> : CommandHandler
-        where TCommand : ICommand
+        where TCommand : class, ICommand
     {
         public Type HandlerServiceType { get; init; }
 
@@ -29,7 +29,7 @@ namespace TodoApp.Helpers.Internal
     }
 
     public record DynamicCommandHandler<TCommand> : CommandHandler<TCommand>
-        where TCommand : ICommand
+        where TCommand : class, ICommand
     {
         public MethodInfo Method { get; init; }
 

@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -10,7 +9,8 @@ namespace TodoApp.Helpers
 {
     public interface ICommandDispatcher
     {
-        Task InvokeAsync(ICommand command, CancellationToken cancellationToken = default);
+        Task<CommandContext> DispatchAsync(ICommand command, CancellationToken cancellationToken = default);
+        Task<TResult> DispatchAsync<TResult>(ICommand<TResult> command, CancellationToken cancellationToken = default);
     }
 
     public class CommandDispatcher : ICommandDispatcher
@@ -29,25 +29,48 @@ namespace TodoApp.Helpers
             HandlerResolver = handlerResolver;
         }
 
-        public Task InvokeAsync(ICommand command, CancellationToken cancellationToken = default)
+        public async Task<CommandContext> DispatchAsync(ICommand command, CancellationToken cancellationToken = default)
         {
-            var handlers = HandlerResolver.GetCommandHandlers(command.GetType());
-            if (handlers.Count == 0) {
-                Log.LogWarning($"No handler(s) found for {command}.");
-                return Task.CompletedTask;
-            }
+            var commandContext = CommandContext.New(command);
+            var commandContextImpl = (ICommandContextImpl) commandContext;
+            using var _ = commandContext.Activate();
+            try {
+                var handlers = HandlerResolver.GetCommandHandlers(command.GetType());
+                if (handlers.Count == 0) {
+                    var error = new InvalidOperationException($"No handler(s) found for {command}.");
+                    Log.LogError(error, error.Message);
+                    throw error;
+                }
 
-            Func<Task> next = null!;
-            var handlerIndex = 0;
-            Task Next() {
-                if (handlerIndex >= handlers!.Count)
-                    return Task.CompletedTask;
-                var handler = handlers[handlerIndex++];
-                // ReSharper disable once AccessToModifiedClosure
-                return handler.InvokeAsync(Services, command, next, cancellationToken);
+                var handlerIndex = 0;
+                Func<Task> next = null!;
+                next = () => {
+                    if (handlerIndex >= handlers!.Count)
+                        return Task.CompletedTask;
+                    var handler = handlers[handlerIndex++];
+                    // ReSharper disable once AccessToModifiedClosure
+                    return handler.InvokeAsync(Services, command, next, cancellationToken);
+                };
+                await next.Invoke().ConfigureAwait(false);
+                commandContextImpl.TrySetDefaultResult();
+                return commandContext;
             }
-            next = Next;
-            return next.Invoke();
+            catch (OperationCanceledException) {
+                commandContextImpl.TrySetCancelled(
+                    cancellationToken.IsCancellationRequested ? cancellationToken : default);
+                return commandContext;
+            }
+            catch (Exception e) {
+                commandContextImpl.TrySetException(e);
+                return commandContext;
+            }
+        }
+
+        public async Task<TResult> DispatchAsync<TResult>(ICommand<TResult> command, CancellationToken cancellationToken = default)
+        {
+            var commandContext = await DispatchAsync((ICommand) command, cancellationToken).ConfigureAwait(false);
+            var typedCommandContext = (CommandContext<TResult>) commandContext;
+            return await typedCommandContext.ResultTask.ConfigureAwait(false);
         }
     }
 }
