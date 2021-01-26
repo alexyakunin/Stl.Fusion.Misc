@@ -6,13 +6,16 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Stl.Async;
+using Stl.CommandR;
+using Stl.CommandR.Commands;
 using Stl.DependencyInjection;
 using Stl.Fusion;
 using Stl.Fusion.Authentication;
+using Stl.Fusion.Authentication.Commands;
 using Stl.Fusion.Authentication.Internal;
+using Stl.Fusion.EntityFramework;
+using Stl.Fusion.Operations;
 using Stl.Serialization;
-using Stl.Time;
-using TodoApp.Helpers;
 
 namespace TodoApp.Services
 {
@@ -22,12 +25,21 @@ namespace TodoApp.Services
     {
         public AppAuthService(IServiceProvider services) : base(services) { }
 
-        public async Task SignInAsync(User user, Session session, CancellationToken cancellationToken = default)
+        // Commands
+
+        public async Task SignInAsync(SignInCommand command, CancellationToken cancellationToken = default)
         {
+            var (user, session) = command;
+            if (Computed.IsInvalidating()) {
+                GetUserAsync(session, default).Ignore();
+                GetUserSessionsAsync(user.Id, default).Ignore();
+                return;
+            }
+
             if (await IsSignOutForcedAsync(session, cancellationToken).ConfigureAwait(false))
                 throw Errors.ForcedSignOut();
 
-            await using var dbContext = CreateDbContext();
+            await using var dbContext = await CreateCommandDbContextAsync(cancellationToken).ConfigureAwait(false);
             await using var tx = await dbContext.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
             var dbUser = await GetOrCreateUserAsync(dbContext, user, cancellationToken).ConfigureAwait(false);
@@ -36,42 +48,50 @@ namespace TodoApp.Services
                 dbSession.UserId = dbUser.Id;
 
             await dbContext.SaveChangesAsync(cancellationToken);
-            await tx.CommitAsync(default);
-            Computed.Invalidate(() => {
-                GetUserAsync(session, default).Ignore();
-                GetUserSessionsAsync(user.Id, default).Ignore();
-            });
         }
 
-        public async Task SignOutAsync(bool force, Session session, CancellationToken cancellationToken = default)
+        public async Task SignOutAsync(SignOutCommand command, CancellationToken cancellationToken = default)
         {
-            await using var dbContext = CreateDbContext();
-            await using var tx = await dbContext.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-
-            var dbSession = await GetOrCreateSessionAsync(dbContext, session, cancellationToken).ConfigureAwait(false);
-            var userId = dbSession.UserId;
-            dbSession.IsSignOutForced = force;
-            dbSession.UserId = null;
-
-            await dbContext.SaveChangesAsync(cancellationToken);
-            await tx.CommitAsync(default);
-            Computed.Invalidate(() => {
+            var (force, session) = command;
+            var context = CommandContext.GetCurrent();
+            string? userId;
+            if (Computed.IsInvalidating()) {
                 GetUserAsync(session, default).Ignore();
+                userId = context.Items.TryGet<OperationItem<string?>>()?.Value;
                 if (userId != null)
                     GetUserSessionsAsync(userId, default).Ignore();
                 if (force)
                     IsSignOutForcedAsync(session, default).Ignore();
-            });
+                return;
+            }
+
+            await using var dbContext = await CreateCommandDbContextAsync(cancellationToken).ConfigureAwait(false);
+            await using var tx = await dbContext.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+
+            var dbSession = await GetOrCreateSessionAsync(dbContext, session, cancellationToken).ConfigureAwait(false);
+            userId = dbSession.UserId;
+            context.Items.Set(OperationItem.New(userId));
+
+            dbSession.IsSignOutForced = force;
+            dbSession.UserId = null;
+
+            await dbContext.SaveChangesAsync(cancellationToken);
         }
 
-        public async Task SaveSessionInfoAsync(SessionInfo sessionInfo, Session session, CancellationToken cancellationToken = default)
+        public async Task SaveSessionInfoAsync(SaveSessionInfoCommand command, CancellationToken cancellationToken = default)
         {
+            var (sessionInfo, session) = command;
+            if (Computed.IsInvalidating()) {
+                GetSessionInfoAsync(session, default).Ignore();
+                return;
+            }
+
             if (sessionInfo.Id != session.Id)
                 throw new ArgumentOutOfRangeException(nameof(sessionInfo));
             var now = Clock.Now.ToDateTime();
             sessionInfo = sessionInfo with { LastSeenAt = now };
 
-            await using var dbContext = CreateDbContext();
+            await using var dbContext = await CreateCommandDbContextAsync(cancellationToken).ConfigureAwait(false);
             await using var tx = await dbContext.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
             var dbSession = await GetOrCreateSessionAsync(dbContext, session, cancellationToken).ConfigureAwait(false);
@@ -81,8 +101,6 @@ namespace TodoApp.Services
             dbSession.ExtraPropertiesJson = ToJson(sessionInfo.ExtraProperties!.ToDictionary(kv => kv.Key, kv => kv.Value));
 
             await dbContext.SaveChangesAsync(cancellationToken);
-            await tx.CommitAsync(default);
-            Computed.Invalidate(() => GetSessionInfoAsync(session, default));
         }
 
         public async Task UpdatePresenceAsync(Session session, CancellationToken cancellationToken = default)
@@ -90,10 +108,11 @@ namespace TodoApp.Services
             var sessionInfo = await GetSessionInfoAsync(session, cancellationToken).ConfigureAwait(false);
             var now = Clock.Now.ToDateTime();
             var delta = now - sessionInfo.LastSeenAt;
-            if (delta < TimeSpan.FromSeconds(10))
+            if (delta < TimeSpan.FromMinutes(3))
                 return; // We don't want to update this too frequently
             sessionInfo = sessionInfo with { LastSeenAt = now };
-            await SaveSessionInfoAsync(sessionInfo, session, cancellationToken).ConfigureAwait(false);
+            var command = new SaveSessionInfoCommand(sessionInfo, session).MarkServerSide();
+            await SaveSessionInfoAsync(command, cancellationToken).ConfigureAwait(false);
         }
 
         // Compute methods
@@ -213,7 +232,7 @@ namespace TodoApp.Services
                     FromJson<Dictionary<string, object>>(dbSession.ExtraPropertiesJson) ?? new()),
             };
 
-        private string ToJson<T>(T source) => JsonValue.New(source).Json;
-        private T? FromJson<T>(string json) => JsonValue.New<T>(json).Value;
+        private string ToJson<T>(T source) => JsonSerialized.New(source).SerializedValue;
+        private T? FromJson<T>(string json) => JsonSerialized.New<T>(json).Value;
     }
 }

@@ -1,8 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Stl.Async;
 using Stl.Fusion;
 using static System.Console;
 
@@ -51,7 +53,8 @@ namespace UpdateExamples
             set
             {
                 _uiInput = value;
-                Computed.Invalidate(() => AggregateAsync());
+                using var _ = Computed.Invalidate();
+                AggregateAsync().Ignore();
             }
         }
 
@@ -71,7 +74,7 @@ namespace UpdateExamples
         public virtual async Task<string> GetWebApiResultAsync()
         {
             var computed = Computed.GetCurrent();
-            using var _ = Computed.Suppress(); // Suppresses dependency capture
+            using var _ = Computed.SuspendDependencyCapture();
             var result = await GetWebApiResultAsyncImpl();
 
             async Task MaybeInvalidate()
@@ -79,35 +82,33 @@ namespace UpdateExamples
                 await Task.Delay(2000); // The delay here should be >= AutoInvalidateTime value above
                 var mustInvalidate = true;
 
-                try
-                {
+                try {
                     var newValue = await GetWebApiResultAsyncImpl();
-                    mustInvalidate = IsChanged((string) computed.Value, newValue);
+                    mustInvalidate = IsChanged((string) computed!.Value!, newValue);
                 }
-                catch (Exception e)
-                {
+                catch (Exception) {
+                    // Intended
                 }
-                finally
-                {
+                finally {
                     // One of actions below should be called no matter what,
                     // otherwise GetWebApiResultAsync result will stay the same forever
                     if (mustInvalidate)
-                        computed.Invalidate();
+                        computed!.Invalidate();
                     else
-                        Task.Run(MaybeInvalidate);
+                        Task.Run(MaybeInvalidate).Ignore();
                 }
             }
 
-            Task.Run(MaybeInvalidate);
-
+            Task.Run(MaybeInvalidate).Ignore();
             return result;
         }
 
         [ComputeMethod(KeepAliveTime = 1, AutoInvalidateTime = 1)] // Caches WebAPI call result for 1 second
-        protected virtual async Task<string> GetWebApiResultAsyncImpl()
+        protected virtual Task<string> GetWebApiResultAsyncImpl()
         {
             WriteLine("Executing GetWebApiResultAsyncImpl");
-            return Math.Floor(_stopwatch.Elapsed.TotalSeconds / 3).ToString();
+            var result = Math.Floor(_stopwatch.Elapsed.TotalSeconds / 3).ToString(CultureInfo.InvariantCulture);
+            return Task.FromResult(result);
         }
 
         private bool IsChanged(string a, string b)

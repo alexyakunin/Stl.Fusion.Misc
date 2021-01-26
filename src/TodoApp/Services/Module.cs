@@ -2,8 +2,8 @@ using System;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Stl.DependencyInjection;
+using Stl.Extensibility;
 using Stl.Serialization;
-using TodoApp.Abstractions;
 
 namespace TodoApp.Services
 {
@@ -11,7 +11,7 @@ namespace TodoApp.Services
     {
         public Module(IServiceCollection services) : base(services) { }
 
-        public override void ConfigureServices()
+        public override void Use()
         {
             Services.TryAddSingleton(c => (Func<ISerializer<string>>) (
                 () => new JsonNetSerializer(JsonNetSerializer.DefaultSettings)));

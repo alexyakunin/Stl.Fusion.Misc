@@ -6,24 +6,29 @@ using MudBlazor;
 using MudBlazor.Services;
 using Pluralize.NET;
 using Stl.DependencyInjection;
+using Stl.Extensibility;
 using Stl.Fusion;
 using Stl.Fusion.Blazor;
 using Stl.Fusion.Client;
-using TodoApp.Abstractions;
 
 namespace TodoApp.UI
 {
+    [Module]
     public class Module : ModuleBase
     {
         public const string ClientSideScope = nameof(ClientSideScope);
-        public WebAssemblyHostBuilder HostBuilder { get; } = null!;
+        public WebAssemblyHostBuilder? HostBuilder { get; }
 
-        public Module(IServiceCollection services) : base(services) { }
-        public Module(WebAssemblyHostBuilder hostBuilder) : base(hostBuilder.Services)
+        public Module(IServiceCollection services, WebAssemblyHostBuilder? hostBuilder = null) : base(services)
             => HostBuilder = hostBuilder;
 
-        public override void ConfigureServices()
+        public override void Use()
         {
+            if (HostBuilder == null) {
+                ConfigureSharedServices();
+                return;
+            }
+
             HostBuilder.Logging.SetMinimumLevel(LogLevel.Warning);
 
             var baseUri = new Uri(HostBuilder.HostEnvironment.BaseAddress);

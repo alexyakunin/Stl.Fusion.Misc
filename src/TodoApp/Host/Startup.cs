@@ -20,6 +20,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.OpenApi.Models;
 using TodoApp.Services;
 using Stl.DependencyInjection;
+using Stl.Extensibility;
 using Stl.Fusion;
 using Stl.Fusion.Authentication;
 using Stl.Fusion.Blazor;
@@ -27,6 +28,7 @@ using Stl.Fusion.Bridge;
 using Stl.Fusion.Client;
 using Stl.Fusion.Server;
 using Stl.IO;
+using TodoApp.UI;
 
 namespace TodoApp.Host
 {
@@ -44,9 +46,6 @@ namespace TodoApp.Host
 
         public void ConfigureServices(IServiceCollection services)
         {
-            var uiModule = new UI.Module(services);
-            var servicesModule = new TodoApp.Services.Module(services);
-
             services.AddResponseCompression(opts => {
                 opts.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(
                     new[] { "application/octet-stream" });
@@ -59,9 +58,14 @@ namespace TodoApp.Host
                 logging.AddFilter("Microsoft.EntityFrameworkCore.Database.Command", LogLevel.Information);
             });
 
-            services.AttributeScanner().AddServicesFrom(GetType().Assembly);
-            servicesModule.ConfigureServices();
-            uiModule.ConfigureSharedServices();
+            services.AttributeScanner().AddServicesFrom(GetType().Assembly); // Local services (no module here)
+            services.UseModules(modules => {
+                modules.ConfigureModuleServices(moduleServices => {
+                    moduleServices.AttributeScanner(ModuleAttribute.DefaultScope)
+                        .AddServicesFrom(typeof(App).Assembly) // UI modules
+                        .AddServicesFrom(typeof(AppDbContext).Assembly); // Services modules
+                });
+            });
 
             // DbContext & related services
             var appTempDir = PathEx.GetApplicationTempDirectory("", true);
