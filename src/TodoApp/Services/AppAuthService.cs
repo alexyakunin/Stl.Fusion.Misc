@@ -40,13 +40,10 @@ namespace TodoApp.Services
                 throw Errors.ForcedSignOut();
 
             await using var dbContext = await CreateCommandDbContextAsync(cancellationToken).ConfigureAwait(false);
-            await using var tx = await dbContext.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-
             var dbUser = await GetOrCreateUserAsync(dbContext, user, cancellationToken).ConfigureAwait(false);
             var dbSession = await GetOrCreateSessionAsync(dbContext, session, cancellationToken).ConfigureAwait(false);
             if (dbSession.UserId != dbUser.Id)
                 dbSession.UserId = dbUser.Id;
-
             await dbContext.SaveChangesAsync(cancellationToken);
         }
 
@@ -66,15 +63,11 @@ namespace TodoApp.Services
             }
 
             await using var dbContext = await CreateCommandDbContextAsync(cancellationToken).ConfigureAwait(false);
-            await using var tx = await dbContext.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-
             var dbSession = await GetOrCreateSessionAsync(dbContext, session, cancellationToken).ConfigureAwait(false);
             userId = dbSession.UserId;
-            context.Items.Set(OperationItem.New(userId));
-
             dbSession.IsSignOutForced = force;
             dbSession.UserId = null;
-
+            context.Items.Set(OperationItem.New(userId));
             await dbContext.SaveChangesAsync(cancellationToken);
         }
 
@@ -92,14 +85,11 @@ namespace TodoApp.Services
             sessionInfo = sessionInfo with { LastSeenAt = now };
 
             await using var dbContext = await CreateCommandDbContextAsync(cancellationToken).ConfigureAwait(false);
-            await using var tx = await dbContext.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-
             var dbSession = await GetOrCreateSessionAsync(dbContext, session, cancellationToken).ConfigureAwait(false);
             dbSession.LastSeenAt = sessionInfo.LastSeenAt;
             dbSession.IPAddress = sessionInfo.IPAddress;
             dbSession.UserAgent = sessionInfo.UserAgent;
             dbSession.ExtraPropertiesJson = ToJson(sessionInfo.ExtraProperties!.ToDictionary(kv => kv.Key, kv => kv.Value));
-
             await dbContext.SaveChangesAsync(cancellationToken);
         }
 

@@ -4,8 +4,8 @@ using Stl;
 
 namespace TodoApp.Services
 {
-    [Index(nameof(Name), IsUnique = true)]
-    [Index(nameof(Email), IsUnique = true)]
+    [Index(nameof(Name))]
+    [Index(nameof(Email))]
     public class DbUser : IHasId<string>
     {
         [Key]
